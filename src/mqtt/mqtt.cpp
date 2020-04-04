@@ -3,15 +3,8 @@
 #include <AsyncMqttClient.h>
 #include <WiFi.h>
 
+#include "config.h"
 #include "mode.h"
-
-#ifndef MQTT_HOST
-#define MQTT_HOST IPAddress(192, 168, 178, 220)
-#endif
-
-#ifndef MQTT_PORT
-#define MQTT_PORT 1883
-#endif
 
 const char *TOPIC_OUTPUT = "bedlight/out";
 const char *TOPIC_BEDLIGHT = "bedlight";

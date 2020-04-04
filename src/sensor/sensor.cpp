@@ -6,15 +6,10 @@
 #include <arduinoFFT.h>
 #include <Wire.h>
 
-#define DEBUG
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "mode.h"
+#include "config.h"
 
-#ifndef SENSOR_CORE_ID
-#define SENSOR_CORE_ID 0
-#endif
-
-#define INTERRUPT_PIN 19 // use pin 2 on Arduino Uno & most boards
 #define SCL_INDEX 0x00
 #define SCL_TIME 0x01
 #define SCL_FREQUENCY 0x02
@@ -68,7 +63,7 @@ void dmpDataReady()
   mpuInterrupt = true;
 }
 
-void fftTest()
+void performFFT()
 {
   FFT.Windowing(vReal, samples, FFT_WIN_TYP_HAMMING, FFT_FORWARD); /* Weigh data */
   FFT.Compute(vReal, vImag, samples, FFT_FORWARD);                 /* Compute FFT */
@@ -85,7 +80,7 @@ void fftTest()
   }
 
   double x = FFT.MajorPeak(vReal, samples, samplingFrequency);
-  frequency = x;
+  // frequency = x;
   Serial.print("MajorPeak (Hz):");
   Serial.println(x, 6);
 }
@@ -94,91 +89,111 @@ void fftTest()
 // ===                    MAIN PROGRAM LOOP                     ===
 // ================================================================
 
-void measureAndReportTask()
+void loopSensor(void *pvParameters)
 {
-  // if programming failed, don't try to do anything
-  if (!dmpReady)
+  // This task is not allowed to return. This is a small helper, maybe the loop can be
+  // designed better.
+  while (true)
   {
-    return;
-  }
-
-  // wait for MPU interrupt or extra packet(s) available
-  while (!mpuInterrupt && fifoCount < packetSize)
-  {
-    if (mpuInterrupt && fifoCount < packetSize)
+    // if programming failed, don't try to do anything
+    if (!dmpReady)
     {
-      // try to get out of the infinite loop
-      fifoCount = mpu.getFIFOCount();
+      continue;
     }
-    if (packetCount == samples)
+
+    // wait for MPU interrupt or extra packet(s) available
+    while (!mpuInterrupt && fifoCount < packetSize)
     {
-      fftTest();
-      packetCount = 0;
+      if (mpuInterrupt && fifoCount < packetSize)
+      {
+        // try to get out of the infinite loop
+        fifoCount = mpu.getFIFOCount();
+      }
+      // other program behavior stuff here
+
+      // if you are really paranoid you can frequently test in between other
+      // stuff to see if mpuInterrupt is true, and if so, "break;" from the
+      // while() loop to immediately process the MPU data
+      if (packetCount == samples)
+      {
+        performFFT();
+        packetCount = 0;
+      }
     }
-  }
 
-  // reset interrupt flag and get INT_STATUS byte
-  mpuInterrupt = false;
-  mpuIntStatus = mpu.getIntStatus();
+    // reset interrupt flag and get INT_STATUS byte
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
 
-  // get current FIFO count
-  fifoCount = mpu.getFIFOCount();
-  if (fifoCount < packetSize)
-  {
-    //Lets go back and wait for another interrupt. We shouldn't be here, we got an interrupt from another event
-    return;
-  }
-
-  // check for overflow (this should never happen unless our code is too inefficient)
-  if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024)
-  {
-    // reset so we can continue cleanly
-    mpu.resetFIFO();
-    Serial.println(F("FIFO overflow!"));
-
-    return;
-  }
-
-  // otherwise, check for DMP data ready interrupt (this should happen frequently)
-  if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT))
-  {
-    // Safty check in case we missed the data calculation and need to reset counter to
-    // avoid buffer overflow.
-    if (packetCount >= samples)
+    // get current FIFO count
+    fifoCount = mpu.getFIFOCount();
+    if (fifoCount < packetSize)
     {
-      packetCount = 0;
+      //Lets go back and wait for another interrupt. We shouldn't be here, we got an interrupt from another event
+      continue;
     }
 
-    // read a packet from FIFO
-    while (fifoCount >= packetSize)
-    { // Lets catch up to NOW, someone is using the dreaded delay()!
-      mpu.getFIFOBytes(fifoBuffer, packetSize);
-      // track FIFO count here in case there is > 1 packet available
-      // (this lets us immediately read more without waiting for an interrupt)
-      fifoCount -= packetSize;
+    // check for overflow (this should never happen unless our code is too inefficient)
+    if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024)
+    {
+      // reset so we can continue cleanly
+      mpu.resetFIFO();
+      Serial.println(F("FIFO overflow!"));
+
+      continue;
     }
 
-    // display real acceleration, adjusted to remove gravity
-    mpu.dmpGetQuaternion(&quat, fifoBuffer);
-    mpu.dmpGetAccel(&aa, fifoBuffer);
-    mpu.dmpGetGravity(&gravity, &quat);
-    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+    // otherwise, check for DMP data ready interrupt (this should happen frequently)
+    if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT))
+    {
+      // Safty check in case we missed the data calculation and need to reset counter to
+      // avoid buffer overflow.
+      if (packetCount >= samples)
+      {
+        packetCount = 0;
+      }
 
-    double magnitude = sqrt(aaReal.x * aaReal.x + aaReal.y * aaReal.y + aaReal.z * aaReal.z);
-    vReal[packetCount] = magnitude;
-    vImag[packetCount] = 0;
+      // read a packet from FIFO
+      while (fifoCount >= packetSize)
+      { // Lets catch up to NOW, someone is using the dreaded delay()!
+        mpu.getFIFOBytes(fifoBuffer, packetSize);
+        // track FIFO count here in case there is > 1 packet available
+        // (this lets us immediately read more without waiting for an interrupt)
+        fifoCount -= packetSize;
+      }
 
-    packetCount++;
+      // display real acceleration, adjusted to remove gravity
+      mpu.dmpGetQuaternion(&quat, fifoBuffer);
+      mpu.dmpGetAccel(&aa, fifoBuffer);
+      mpu.dmpGetGravity(&gravity, &quat);
+      mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+
+      double magnitude = sqrt(aaReal.x * aaReal.x + aaReal.y * aaReal.y + aaReal.z * aaReal.z);
+      vReal[packetCount] = magnitude;
+      vImag[packetCount] = 0;
+
+      packetCount++;
+    }
   }
 }
 
 void setupSensor()
 {
-  Serial.println("Setup: Sensor");
+  Serial.println(F("Setup: Sensor"));
+
+  // join I2C bus (I2Cdev library doesn't do this automatically)
+  Wire.begin();
+  Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
+
   delay(1000);
 
   mpu.initialize();
-  pinMode(INTERRUPT_PIN, INPUT);
+  pinMode(SENSOR_INTERRUPT_PIN, INPUT);
+
+  // verify connection
+  Serial.println(F("Testing device connections..."));
+  Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+
   // load and configure the DMP
   devStatus = mpu.dmpInitialize();
 
@@ -190,9 +205,6 @@ void setupSensor()
   mpu.setYGyroOffset(47);
   mpu.setZGyroOffset(-3);
 
-  Serial.print("DevStatus ");
-  Serial.println(devStatus);
-
   // make sure it worked (returns 0 if so)
   if (devStatus == 0)
   {
@@ -200,17 +212,13 @@ void setupSensor()
     mpu.CalibrateAccel(6);
     mpu.CalibrateGyro(6);
 
-    Serial.println("calibrate");
-
     mpu.PrintActiveOffsets();
     mpu.setDMPEnabled(true);
 
     mpu.setDLPFMode(6);
 
-    Serial.println("interrupt");
-
     // enable Arduino interrupt detection
-    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+    attachInterrupt(digitalPinToInterrupt(SENSOR_INTERRUPT_PIN), dmpDataReady, RISING);
     mpuIntStatus = mpu.getIntStatus();
 
     // set our DMP Ready flag so the main loop() function knows it's okay to use it
@@ -221,8 +229,23 @@ void setupSensor()
   }
   else
   {
-    // ERROR! initial memory load failed or DMP configuration updates failed
-    Serial.println("Error: Cloud not load/init DMP");
+    // ERROR!
+    // 1 = initial memory load failed
+    // 2 = DMP configuration updates failed
+    // (if it's going to break, usually the code will be 1)
+    Serial.print(F("DMP Initialization failed (code "));
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+    delay(30000);
     ESP.restart();
   }
+
+  xTaskCreatePinnedToCore(
+      loopSensor,      // Function to implement the task
+      "sensor",        // Name of the task
+      10000,           // Stack size in words
+      NULL,            // Task input parameter
+      0,               // Priority of the task
+      NULL,            // Task handle.
+      SENSOR_CORE_ID); // Core where the task should run
 }
