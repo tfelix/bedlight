@@ -29,20 +29,13 @@ void onWifiEvent(WiFiEvent_t event)
     break;
   case SYSTEM_EVENT_STA_DISCONNECTED:
     Serial.println("WiFi lost connection, reconnecting");
+    isLightOn = false;
+    delay(3000);
     xTimerStart(wifiReconnectTimer, 0);
     break;
   default:
     // no op
     break;
-  }
-}
-
-void otaCheckTask(void *pvParameters)
-{
-  while (true)
-  {
-    ArduinoOTA.handle();
-    delay(200);
   }
 }
 
@@ -53,9 +46,14 @@ void onOtaStart()
 
   String type;
   if (ArduinoOTA.getCommand() == U_FLASH)
+  {
     type = "sketch";
-  else // U_SPIFFS
+  }
+  else
+  {
+    // U_SPIFFS
     type = "filesystem";
+  }
 
   // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
   Serial.println("Start updating " + type);
@@ -76,9 +74,8 @@ void onOtaError(ota_error_t error)
     Serial.println("OTA: End Failed");
 }
 
-void setupOta()
+void otaCheckTask(void *pvParameters)
 {
-  Serial.println("Setup: wifi ota");
   wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
 
   WiFi.mode(WIFI_STA);
@@ -87,14 +84,28 @@ void setupOta()
   if (!MDNS.begin("bedlight"))
   {
     Serial.println("Error setting up MDNS responder!");
-    delay(5000);
+    delay(3000);
     ESP.restart();
   }
 
   ArduinoOTA
       .onStart(onOtaStart)
       .onError(onOtaError)
+      .setPort(3232)
       .begin();
+
+  connectToWifi();
+
+  while (true)
+  {
+    ArduinoOTA.handle();
+    delay(200);
+  }
+}
+
+void setupOta()
+{
+  Serial.println("Setup: wifi ota");
 
   xTaskCreatePinnedToCore(
       otaCheckTask, // Function to implement the task
@@ -104,6 +115,4 @@ void setupOta()
       0,            // Priority of the task
       NULL,         // Task handle.
       OTA_CORE_ID); // Core where the task should run
-
-  connectToWifi();
 }

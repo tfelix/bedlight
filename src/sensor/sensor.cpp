@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wifi.h>
 
 // I2Cdev and MPU6050 must be installed as libraries, or else the .cpp/.h files
 // for both classes must be in the include path of your project
@@ -14,6 +15,11 @@
 #define SCL_TIME 0x01
 #define SCL_FREQUENCY 0x02
 #define SCL_PLOT 0x03
+
+// For UDP sending
+const char *udpAddress = "192.168.178.220";
+const int udpPort = 8089;
+WiFiUDP udp;
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -35,11 +41,10 @@ double vReal[samples];
 double vImag[samples];
 
 // MPU control/status vars
-bool dmpReady = false;  // set true if DMP init was successful
-uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
-uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;     // count of all bytes currently in FIFO
+bool dmpReady = false;   // set true if DMP init was successful
+uint8_t mpuIntStatus;    // holds actual interrupt status byte from MPU
+uint16_t dmpPacketSize;  // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;      // count of all bytes currently in FIFO
 uint8_t fifoBuffer[64]; // FIFO storage buffer
 
 // orientation/motion vars
@@ -49,10 +54,11 @@ VectorInt16 gg;      // [x, y, z]            gyro sensor measurements
 VectorInt16 aaReal;  // [x, y, z]            gravity-free accel sensor measurements
 VectorFloat gravity; // [x, y, z]            gravity vector
 
-VectorInt16 aaBuffer[100];
-
 uint16_t packetCount = 0;
-char packetBuffer[1024];
+char packetBuffer[512];
+
+uint16_t sampleCounter = 0;
+uint64_t lastSampleTimeStamp = 0;
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -65,119 +71,48 @@ void dmpDataReady()
 
 void performFFT()
 {
+  for (uint8_t i = 0; i < samples; i++)
+  {
+    vImag[i] = 0;
+  }
+
   FFT.Windowing(vReal, samples, FFT_WIN_TYP_HAMMING, FFT_FORWARD); /* Weigh data */
   FFT.Compute(vReal, vImag, samples, FFT_FORWARD);                 /* Compute FFT */
   FFT.ComplexToMagnitude(vReal, vImag, samples);                   /* Compute magnitudes */
-  uint16_t bufferSize = samples >> 2;
+  const double majorPeakHz = FFT.MajorPeak(vReal, samples, samplingFrequency);
 
-  for (uint16_t i = 5; i < bufferSize; i++)
+  // Prepare and send package
+  snprintf(packetBuffer,
+           sizeof packetBuffer,
+           "bett peak=%.4f,hz1=%.4f,hz2=%.4f,hz3=%.4f,hz4=%.4f,hz5=%.4f,hz6=%.4f,hz7=%.4f,hz8=%.4f,hz9=%.4f,hz10=%.4f\n",
+           majorPeakHz,
+           vReal[1],
+           vReal[2],
+           vReal[3],
+           vReal[4],
+           vReal[5],
+           vReal[6],
+           vReal[7],
+           vReal[8],
+           vReal[9],
+           vReal[10]);
+
+  for (uint8_t i = 0; i < samples; i++)
   {
-    double abscissa = (i * samplingFrequency) / samples;
-    Serial.print(abscissa, 6);
-    Serial.print("Hz");
-    Serial.print(" ");
-    Serial.println(vReal[i], 4);
+    vReal[i] = 0;
+    vImag[i] = 0;
   }
 
-  double x = FFT.MajorPeak(vReal, samples, samplingFrequency);
-  // frequency = x;
-  Serial.print("MajorPeak (Hz):");
-  Serial.println(x, 6);
-}
-
-// ================================================================
-// ===                    MAIN PROGRAM LOOP                     ===
-// ================================================================
-
-void loopSensor(void *pvParameters)
-{
-  // This task is not allowed to return. This is a small helper, maybe the loop can be
-  // designed better.
-  while (true)
+  if (WiFi.status() == WL_CONNECTED)
   {
-    // if programming failed, don't try to do anything
-    if (!dmpReady)
-    {
-      continue;
-    }
-
-    // wait for MPU interrupt or extra packet(s) available
-    while (!mpuInterrupt && fifoCount < packetSize)
-    {
-      if (mpuInterrupt && fifoCount < packetSize)
-      {
-        // try to get out of the infinite loop
-        fifoCount = mpu.getFIFOCount();
-      }
-      // other program behavior stuff here
-
-      // if you are really paranoid you can frequently test in between other
-      // stuff to see if mpuInterrupt is true, and if so, "break;" from the
-      // while() loop to immediately process the MPU data
-      if (packetCount == samples)
-      {
-        performFFT();
-        packetCount = 0;
-      }
-    }
-
-    // reset interrupt flag and get INT_STATUS byte
-    mpuInterrupt = false;
-    mpuIntStatus = mpu.getIntStatus();
-
-    // get current FIFO count
-    fifoCount = mpu.getFIFOCount();
-    if (fifoCount < packetSize)
-    {
-      //Lets go back and wait for another interrupt. We shouldn't be here, we got an interrupt from another event
-      continue;
-    }
-
-    // check for overflow (this should never happen unless our code is too inefficient)
-    if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024)
-    {
-      // reset so we can continue cleanly
-      mpu.resetFIFO();
-      Serial.println(F("FIFO overflow!"));
-
-      continue;
-    }
-
-    // otherwise, check for DMP data ready interrupt (this should happen frequently)
-    if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT))
-    {
-      // Safty check in case we missed the data calculation and need to reset counter to
-      // avoid buffer overflow.
-      if (packetCount >= samples)
-      {
-        packetCount = 0;
-      }
-
-      // read a packet from FIFO
-      while (fifoCount >= packetSize)
-      { // Lets catch up to NOW, someone is using the dreaded delay()!
-        mpu.getFIFOBytes(fifoBuffer, packetSize);
-        // track FIFO count here in case there is > 1 packet available
-        // (this lets us immediately read more without waiting for an interrupt)
-        fifoCount -= packetSize;
-      }
-
-      // display real acceleration, adjusted to remove gravity
-      mpu.dmpGetQuaternion(&quat, fifoBuffer);
-      mpu.dmpGetAccel(&aa, fifoBuffer);
-      mpu.dmpGetGravity(&gravity, &quat);
-      mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-
-      double magnitude = sqrt(aaReal.x * aaReal.x + aaReal.y * aaReal.y + aaReal.z * aaReal.z);
-      vReal[packetCount] = magnitude;
-      vImag[packetCount] = 0;
-
-      packetCount++;
-    }
+    udp.beginPacket(udpAddress, udpPort);
+    udp.print(packetBuffer);
+    udp.endPacket();
   }
+  // Serial.print(packetBuffer);
 }
 
-void setupSensor()
+void initSensor()
 {
   Serial.println(F("Setup: Sensor"));
 
@@ -195,7 +130,8 @@ void setupSensor()
   Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
 
   // load and configure the DMP
-  devStatus = mpu.dmpInitialize();
+  // return status after each device operation (0 = success, !0 = error)
+  uint8_t devStatus = mpu.dmpInitialize();
 
   // supply your own gyro offsets here, scaled for min sensitivity
   mpu.setXAccelOffset(-1707);
@@ -225,7 +161,7 @@ void setupSensor()
     dmpReady = true;
 
     // get expected DMP packet size for later comparison
-    packetSize = mpu.dmpGetFIFOPacketSize();
+    dmpPacketSize = mpu.dmpGetFIFOPacketSize();
   }
   else
   {
@@ -236,10 +172,99 @@ void setupSensor()
     Serial.print(F("DMP Initialization failed (code "));
     Serial.print(devStatus);
     Serial.println(F(")"));
-    delay(30000);
-    ESP.restart();
   }
+}
 
+// ================================================================
+// ===                    MAIN PROGRAM LOOP                     ===
+// ================================================================
+
+void loopSensor(void *pvParameters)
+{
+  initSensor();
+
+  // This task is not allowed to return. This is a small helper, maybe the loop can be
+  // designed better.
+  while (true)
+  {
+    // if programming failed, don't try to do anything
+    if (!dmpReady)
+    {
+      continue;
+    }
+
+    // wait for MPU interrupt or extra packet(s) available
+    while (!mpuInterrupt && fifoCount < dmpPacketSize)
+    {
+      if (mpuInterrupt && fifoCount < dmpPacketSize)
+      {
+        // try to get out of the infinite loop
+        fifoCount = mpu.getFIFOCount();
+      }
+
+      if (packetCount == samples)
+      {
+        performFFT();
+        packetCount = 0;
+      }
+    }
+
+    // reset interrupt flag and get INT_STATUS byte
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
+
+    // get current FIFO count
+    fifoCount = mpu.getFIFOCount();
+    if (fifoCount < dmpPacketSize)
+    {
+      // Safety check, lets go back and wait for another interrupt.
+      // We shouldn't be here, we got an interrupt from another event
+      continue;
+    }
+
+    // check for overflow (this should never happen unless our code is too inefficient)
+    if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024)
+    {
+      // reset so we can continue cleanly
+      mpu.resetFIFO();
+      Serial.println(F("FIFO overflow!"));
+
+      continue;
+    }
+
+    // otherwise, check for DMP data ready interrupt (this should happen frequently)
+    if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT))
+    {
+      // read a packet from FIFO
+      while (fifoCount >= dmpPacketSize)
+      {
+        // Lets catch up to NOW, someone is using the dreaded delay()!
+        mpu.getFIFOBytes(fifoBuffer, dmpPacketSize);
+        // track FIFO count here in case there is > 1 packet available
+        // (this lets us immediately read more without waiting for an interrupt)
+        fifoCount -= dmpPacketSize;
+      }
+
+      sampleCounter++;
+
+      if (packetCount < samples)
+      {
+        // display real acceleration, adjusted to remove gravity
+        mpu.dmpGetQuaternion(&quat, fifoBuffer);
+        mpu.dmpGetAccel(&aa, fifoBuffer);
+        mpu.dmpGetGravity(&gravity, &quat);
+        mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+
+        double magnitude = sqrt(aaReal.x * aaReal.x + aaReal.y * aaReal.y + aaReal.z * aaReal.z);
+        vReal[packetCount] = magnitude;
+        packetCount++;
+      }
+    }
+  }
+}
+
+void setupSensor()
+{
   xTaskCreatePinnedToCore(
       loopSensor,      // Function to implement the task
       "sensor",        // Name of the task

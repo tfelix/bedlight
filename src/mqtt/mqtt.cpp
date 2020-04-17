@@ -146,6 +146,10 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
   Serial.println("Disconnected from MQTT");
 
+  // Switch light of if we loose connection to MQTT so we are not
+  // getting annoyed.
+  isLightOn = false;
+
   if (WiFi.isConnected())
   {
     xTimerStart(mqttReconnectTimer, 0);

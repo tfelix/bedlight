@@ -3,23 +3,21 @@
 #include <FastLED.h>
 
 #include "mode.h"
+#include "config.h"
 
 #include "led/pacificia.h"
 #include "led/fx.h"
-
-#define DATA_PIN 27
 
 CRGB leds[NUM_LEDS];
 
 void setupLed()
 {
   Serial.println("Setup: LED");
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, LED_DATA_PIN>(leds, NUM_LEDS);
 
   // Brigthness 255 is flickering at the end of the strip,
   // 200 less but too, 100 works so far.
-  // Try out 5V and 15 Amps
-  FastLED.setMaxPowerInMilliWatts(70000);
+  FastLED.setMaxPowerInMilliWatts(MAX_LED_OUTPUT_MW);
   // FastLED.setBrightness(100);
   FastLED.setCorrection(TypicalLEDStrip);
 
