@@ -14,7 +14,10 @@ const char *TOPIC_BEDLIGHT_MODE = "bedlight/mode";
 AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
 
-void onMqttMessageBedlightColor(char *payload)
+/**
+ * Translates the incoming payload into an RGB value for the LEDs to display.
+ */
+void onMqttMessageBedlightColor(char payload[])
 {
   uint8_t i = 0;
   uint8_t rgb[3] = {0, 0, 0};
@@ -112,30 +115,42 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
   {
     char buf[256];
     snprintf(buf, sizeof buf, "Unknown topic: %s, payload: %s", topic, new_payload);
-    printDebug(buf);
+    printMessage(buf);
   }
 }
 
-void printDebug(char *msg)
+void printMessage(const __FlashStringHelper *ifsh)
 {
+  printMessage(reinterpret_cast<const char *>(ifsh));
+}
+
+void printMessage(const char msg[])
+{
+  Serial.println(msg);
   mqttClient.publish(TOPIC_OUTPUT, 1, false, msg);
 }
 
 void connectToMqtt()
 {
-  if (!WiFi.isConnected())
+  if (!isWifiConnected)
   {
+    // Retry later when Wifi is maybe enabled again as we can not connect to
+    // mqtt without wifi.
     xTimerStart(mqttReconnectTimer, 0);
     return;
   }
 
-  Serial.println("Connecting to MQTT...");
-  mqttClient.connect();
+  if (!isMqttConnected)
+  {
+    Serial.println("Connecting to MQTT...");
+    mqttClient.connect();
+  }
 }
 
 void onMqttConnect(bool sessionPresent)
 {
   Serial.println("Connected to MQTT");
+  isMqttConnected = true;
 
   mqttClient.subscribe(TOPIC_BEDLIGHT, 1);
   mqttClient.subscribe(TOPIC_BEDLIGHT_MODE, 1);
@@ -147,13 +162,12 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
   Serial.println("Disconnected from MQTT");
 
   // Switch light of if we loose connection to MQTT so we are not
-  // getting annoyed.
-  isLightOn = false;
+  // getting annoyed because we can not control it anymore.
+  // If we loose connection too regularly we might to implement some kind of timed
+  // switch which turns off the light after 30sec or so.
+  isMqttConnected = false;
 
-  if (WiFi.isConnected())
-  {
-    xTimerStart(mqttReconnectTimer, 0);
-  }
+  xTimerStart(mqttReconnectTimer, 0);
 }
 
 void setupMqtt()

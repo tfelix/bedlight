@@ -1,7 +1,6 @@
 #include "ota.h"
 
 #include <WiFi.h>
-#include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
@@ -26,10 +25,15 @@ void onWifiEvent(WiFiEvent_t event)
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
+
+    isWifiConnected = true;
+
     break;
   case SYSTEM_EVENT_STA_DISCONNECTED:
-    Serial.println("WiFi lost connection, reconnecting");
-    isLightOn = false;
+    Serial.println("WiFi lost connection, try reconnecting");
+
+    isWifiConnected = false;
+
     delay(3000);
     xTimerStart(wifiReconnectTimer, 0);
     break;
@@ -42,7 +46,7 @@ void onWifiEvent(WiFiEvent_t event)
 void onOtaStart()
 {
   // Disable LEDs to prevent flashing during update
-  isLightOn = false;
+  isUpdating = true;
 
   String type;
   if (ArduinoOTA.getCommand() == U_FLASH)
@@ -76,17 +80,17 @@ void onOtaError(ota_error_t error)
 
 void otaCheckTask(void *pvParameters)
 {
-  wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+  Serial.println("Setup: wifi");
+
+  wifiReconnectTimer = xTimerCreate(
+      "wifiReconnect",
+      pdMS_TO_TICKS(5000),
+      pdFALSE,
+      (void *)0,
+      reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
 
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(onWifiEvent);
-
-  if (!MDNS.begin("bedlight"))
-  {
-    Serial.println("Error setting up MDNS responder!");
-    delay(3000);
-    ESP.restart();
-  }
 
   ArduinoOTA
       .onStart(onOtaStart)
@@ -105,14 +109,12 @@ void otaCheckTask(void *pvParameters)
 
 void setupOta()
 {
-  Serial.println("Setup: wifi ota");
-
   xTaskCreatePinnedToCore(
       otaCheckTask, // Function to implement the task
       "ota",        // Name of the task
       10000,        // Stack size in words
       NULL,         // Task input parameter
-      0,            // Priority of the task
+      1,            // Priority of the task
       NULL,         // Task handle.
       OTA_CORE_ID); // Core where the task should run
 }

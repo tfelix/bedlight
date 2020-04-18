@@ -13,7 +13,12 @@ enum DisplayMode
   PACIFICIA
 };
 
+
+extern volatile bool isUpdating;
+extern volatile bool isWifiConnected;
+extern volatile bool isMqttConnected;
 extern volatile bool isLightOn;
+
 extern volatile DisplayMode currentDisplayMode;
 extern CRGB color;
 

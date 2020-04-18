@@ -21,16 +21,17 @@ void setupLed()
   // FastLED.setBrightness(100);
   FastLED.setCorrection(TypicalLEDStrip);
 
+  delay(100);
   FastLED.clear(true);
   FastLED.show();
 }
 
 void loopLed()
 {
-
   if (!isLightOn)
   {
     FastLED.clear(true);
+    FastLED.show();
     delay(100);
     return;
   }
@@ -53,4 +54,6 @@ void loopLed()
     isLightOn = false;
     return;
   }
+
+  yield();
 }

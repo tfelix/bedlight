@@ -55,8 +55,8 @@ THE SOFTWARE.
 
         #define PROGMEM
         #define PGM_P  const char *
-        #define PSTR(str) (str)
-        #define F(x) x
+        // #define PSTR(str) (str)
+        // #define F(x) x
 
         typedef void prog_void;
         typedef char prog_char;
@@ -65,14 +65,14 @@ THE SOFTWARE.
         typedef int16_t prog_int16_t;
         typedef uint16_t prog_uint16_t;
 
-        #define strcpy_P(dest, src) strcpy((dest), (src))
-        #define strcat_P(dest, src) strcat((dest), (src))
-        #define strcmp_P(a, b) strcmp((a), (b))
+        // #define strcpy_P(dest, src) strcpy((dest), (src))
+        // #define strcat_P(dest, src) strcat((dest), (src))
+        // #define strcmp_P(a, b) strcmp((a), (b))
 
         #define pgm_read_byte(addr) (*(const unsigned char *)(addr))
-        #define pgm_read_word(addr) (*(const unsigned short *)(addr))
-        #define pgm_read_dword(addr) (*(const unsigned long *)(addr))
-        #define pgm_read_float(addr) (*(const float *)(addr))
+        // #define pgm_read_word(addr) (*(const unsigned short *)(addr))
+        // #define pgm_read_dword(addr) (*(const unsigned long *)(addr))
+        // #define pgm_read_float(addr) (*(const float *)(addr))
 
         #define pgm_read_byte_near(addr) pgm_read_byte(addr)
         #define pgm_read_word_near(addr) pgm_read_word(addr)
@@ -288,10 +288,7 @@ uint8_t MPU6050::dmpInitialize() {
 	// get MPU hardware revision
 	setMemoryBank(0x10, true, true);
 	setMemoryStartAddress(0x06);
-	Serial.println(F("Checking hardware revision..."));
-	Serial.print(F("Revision @ user[16][6] = "));
-	Serial.println(readMemoryByte(), HEX);
-	Serial.println(F("Resetting memory bank selection to 0..."));
+	DEBUG_PRINTLN(F("Resetting memory bank selection to 0..."));
 	setMemoryBank(0, false, false);
 
 	// check OTP bank valid
