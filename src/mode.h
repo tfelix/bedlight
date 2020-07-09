@@ -10,9 +10,13 @@ enum DisplayMode
   THEATER_CHASE,
   FIRE,
   COLOR,
-  PACIFICIA
+  PACIFICIA,
+  MOVING_DOT,
+  HAL,
+  SEXY_TIME
 };
 
+extern volatile bool isMotionActive;
 
 extern volatile bool isUpdating;
 extern volatile bool isWifiConnected;
@@ -23,7 +27,8 @@ extern volatile DisplayMode currentDisplayMode;
 extern CRGB color;
 
 extern volatile bool shouldRecalibrateSensor;
-extern volatile uint8_t energy;
-extern volatile uint8_t frequency;
 
+extern volatile uint16_t motionThreshold;
+extern volatile uint8_t motionSensitivity;
+extern volatile uint8_t motionDecay;
 #endif

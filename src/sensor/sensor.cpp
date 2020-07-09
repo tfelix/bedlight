@@ -10,6 +10,7 @@
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "mode.h"
 #include "config.h"
+#include "led/motion.h"
 #include "debug/transmission.h"
 #include "mqtt/mqtt.h"
 
@@ -70,6 +71,7 @@ void performFFT()
   FFT.ComplexToMagnitude(vReal, vImag, samples);                   /* Compute magnitudes */
   const double majorPeakHz = FFT.MajorPeak(vReal, samples, samplingFrequency);
 
+  convertToEnergy(vReal);
   debugSendFFT(majorPeakHz, vReal);
 
   // We need to zero the buffer arrays otherwise our fft sometimes runs havoc after a

@@ -1,6 +1,9 @@
 #include "fx.h"
 
+#include <algorithm>
+
 #include "led/led.h"
+#include "motion.h"
 #include "mode.h"
 
 // Input a value 0 to 255 to get a color value.
@@ -37,8 +40,24 @@ void rainbow()
 
 void showColor()
 {
-  FastLED.showColor(color);
-  delay(50);
+  if (isMotionActive)
+  {
+    auto energy = getEnergy();
+    auto maxMotionE = std::max(std::max(energy.low, energy.mid), energy.high) / 255.0;
+    // Perform the motion active animation.
+    for (auto i = 0; i < NUM_LEDS; i++)
+    {
+      CHSV hsv = rgb2hsv_approximate(leds[i]);
+      hsv.v = 255 * maxMotionE;
+      hsv2rgb_rainbow(hsv, leds[i]);
+    }
+  }
+  else
+  {
+    FastLED.showColor(color);
+  }
+
+  delay(5);
 }
 
 // Theatre-style crawling lights.

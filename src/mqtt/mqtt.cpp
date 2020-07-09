@@ -2,14 +2,21 @@
 
 #include <AsyncMqttClient.h>
 #include <WiFi.h>
+#include <algorithm>
 
 #include "config.h"
 #include "mode.h"
+#include "led/motion.h"
 
 const char *TOPIC_OUTPUT = "bedlight/out";
 const char *TOPIC_BEDLIGHT = "bedlight";
 const char *TOPIC_BEDLIGHT_COLOR = "bedlight/color";
 const char *TOPIC_BEDLIGHT_MODE = "bedlight/mode";
+const char *TOPIC_BEDLIGHT_MOTION = "bedlight/motion";
+const char *TOPIC_BEDLIGHT_MOTION_THRESHOLD = "bedlight/motion/threshold";
+
+// DEBUG ONLY REMOVE
+const char *TOPIC_BEDLIGHT_MOTION_ENERGY = "bedlight/motion/energy";
 
 AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
@@ -33,13 +40,18 @@ void onMqttMessageBedlightColor(char payload[])
   currentDisplayMode = COLOR;
   color.setRGB(rgb[0], rgb[1], rgb[2]);
   isLightOn = (rgb[0] + rgb[1] + rgb[2]) != 0;
+
+  Serial.print("color[r:");
+  Serial.print(color.r);
+  Serial.print(", g: ");
+  Serial.print(color.g);
+  Serial.print(", b: ");
+  Serial.print(color.b);
+  Serial.println("]");
 }
 
 void onMqttMessageBedlight(char *payload)
 {
-  Serial.print("onMqttMessageBedlight: ");
-  Serial.println(payload);
-
   if (strcasecmp(payload, "ON") == 0)
   {
     isLightOn = true;
@@ -50,34 +62,67 @@ void onMqttMessageBedlight(char *payload)
   }
 }
 
-void onMqttMessageBedlightMode(char *payload)
+void onMqttMessageBedlightMotion(char *payload)
+{
+  if (strcasecmp(payload, "ON") == 0)
+  {
+    isMotionActive = true;
+  }
+  else
+  {
+    isMotionActive = false;
+  }
+}
+
+void onMqttMessageBedlightMotionEnergy(char payload[])
+{
+  int value = atoi(payload);
+  value = std::max(0, std::min(255, value));
+
+  setAllEnergy(value);
+}
+
+void onMqttMessageBedlightMotionThreshold(char payload[])
+{
+  int value = atoi(payload);
+  if (value < 50)
+  {
+    value = 50;
+  }
+  if (value > 300)
+  {
+    value = 300;
+  }
+
+  Serial.print("MotionThresh: ");
+  Serial.println(value);
+
+  motionThreshold = value;
+}
+
+void onMqttMessageBedlightMode(char payload[])
 {
   Serial.print("onMqttMessageBedlightMode: ");
   Serial.println(payload);
 
   if (strcasecmp(payload, "RAINBOW") == 0)
   {
-    isLightOn = true;
     currentDisplayMode = RAINBOW;
   }
   else if (strcasecmp(payload, "FIRE"))
   {
-    isLightOn = true;
     currentDisplayMode = FIRE;
   }
   else if (strcasecmp(payload, "PACIFICIA"))
   {
-    isLightOn = true;
     currentDisplayMode = PACIFICIA;
   }
   else if (strcasecmp(payload, "THEATER_CHASE"))
   {
-    isLightOn = true;
     currentDisplayMode = THEATER_CHASE;
   }
   else if (strcasecmp(payload, "COLOR"))
   {
-    isLightOn = true;
     currentDisplayMode = COLOR;
   }
   else
@@ -94,11 +139,6 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
   new_payload[len] = '\0';
   strncpy(new_payload, payload, len);
 
-  Serial.print("onMqttMessage - topic: ");
-  Serial.print(topic);
-  Serial.print(" payload: ");
-  Serial.println(new_payload);
-
   if (strcmp(topic, TOPIC_BEDLIGHT) == 0)
   {
     onMqttMessageBedlight(new_payload);
@@ -110,6 +150,18 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
   else if (strcmp(topic, TOPIC_BEDLIGHT_MODE) == 0)
   {
     onMqttMessageBedlightMode(new_payload);
+  }
+  else if (strcmp(topic, TOPIC_BEDLIGHT_MOTION) == 0)
+  {
+    onMqttMessageBedlightMotion(new_payload);
+  }
+  else if (strcmp(topic, TOPIC_BEDLIGHT_MOTION_THRESHOLD) == 0)
+  {
+    onMqttMessageBedlightMotionThreshold(new_payload);
+  }
+  else if (strcmp(topic, TOPIC_BEDLIGHT_MOTION_ENERGY) == 0)
+  {
+    onMqttMessageBedlightMotionEnergy(new_payload);
   }
   else
   {
@@ -152,9 +204,13 @@ void onMqttConnect(bool sessionPresent)
   Serial.println("Connected to MQTT");
   isMqttConnected = true;
 
+  // Subscribe to all relevant topics.
   mqttClient.subscribe(TOPIC_BEDLIGHT, 1);
   mqttClient.subscribe(TOPIC_BEDLIGHT_MODE, 1);
   mqttClient.subscribe(TOPIC_BEDLIGHT_COLOR, 1);
+  mqttClient.subscribe(TOPIC_BEDLIGHT_MOTION, 1);
+  mqttClient.subscribe(TOPIC_BEDLIGHT_MOTION_THRESHOLD, 1);
+  mqttClient.subscribe(TOPIC_BEDLIGHT_MOTION_ENERGY, 1);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)

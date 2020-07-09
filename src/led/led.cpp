@@ -3,6 +3,7 @@
 #include <FastLED.h>
 
 #include "mode.h"
+#include "motion.h"
 #include "config.h"
 
 #include "led/pacificia.h"
@@ -28,7 +29,16 @@ void setupLed()
 
 void loopLed()
 {
-  if (!isLightOn)
+  if (isMotionActive)
+  {
+    decayMotionEnergy();
+  }
+  else
+  {
+    setAllEnergy(0);
+  }
+
+  if (!isLightOn || !isWifiConnected || !isMqttConnected || isUpdating)
   {
     FastLED.clear(true);
     FastLED.show();
